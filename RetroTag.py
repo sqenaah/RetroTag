@@ -531,7 +531,7 @@ async def save_user (user :types .User ,skip_history_check =False ):
     if user .id ==BOT_ID or (hasattr (user ,'is_bot')and user .is_bot ):
         return []
 
-    now =datetime .now ().strftime ("%d.%m.%Y %H:%M")
+    now =datetime .now ().strftime ("%d.%m.%Y")
     first_name =user .first_name or ""
     last_name =user .last_name or ""
     name =f"{first_name} {last_name}".strip ()
@@ -742,7 +742,8 @@ async def get_history (uid :int ,requester_id :int =None ,user_in_db :bool =True
     if names :
         text +=f"{await get_text('names', requester_id, language=lang)}\n"
         for i ,r in enumerate (names ,1 ):
-            text +=f"<code>{i}.</code> <code>[{r['date']}]</code> <b>{r['value']}</b>\n"
+            date_display = r['date'].split(' ')[0] if isinstance(r.get('date'), str) else str(r.get('date', ''))
+            text +=f"<code>{i}.</code> <code>[{date_display}]</code> <b>{r['value']}</b>\n"
         text +="\n"
 
     usernames =[r for r in rows if r ["type"]=="username"]
@@ -752,17 +753,18 @@ async def get_history (uid :int ,requester_id :int =None ,user_in_db :bool =True
         deleted_text ="(deleted)"if lang =="en"else "(удалён)"
         returned_text ="returned"if lang =="en"else "вернул(а)"
         for i ,r in enumerate (usernames ,1 ):
+            date_display = r['date'].split(' ')[0] if isinstance(r.get('date'), str) else str(r.get('date', ''))
             val =f"@{r['value']}"if r ['value']else deleted_text
             if prev and deleted_text in prev :
                 if r ['value']:
-                    text +=f"<code>{i}.</code> <code>[{r['date']}]</code> <b>✨ {returned_text} @{r['value']}</b>\n"
+                    text +=f"<code>{i}.</code> <code>[{date_display}]</code> <b>✨ {returned_text} @{r['value']}</b>\n"
                 else :
-                    text +=f"<code>{i}.</code> <code>[{r['date']}]</code> <s>{val}</s>\n"
+                    text +=f"<code>{i}.</code> <code>[{date_display}]</code> <s>{val}</s>\n"
             else :
                 if r ['value']:
-                    text +=f"<code>{i}.</code> <code>[{r['date']}]</code> <b>{val}</b>\n"
+                    text +=f"<code>{i}.</code> <code>[{date_display}]</code> <b>{val}</b>\n"
                 else :
-                    text +=f"<code>{i}.</code> <code>[{r['date']}]</code> <s>{val}</s>\n"
+                    text +=f"<code>{i}.</code> <code>[{date_display}]</code> <s>{val}</s>\n"
             prev =val
 
     return text
