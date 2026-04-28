@@ -41,6 +41,11 @@ promo_codes =None
 chat_languages =None
 
 api_queue =None
+language_cache = {}
+whitelist_cache = set()
+premium_cache = {}
+user_doc_cache = {}
+username_to_userid_cache = {}
 
 LOCALES ={
 'ru':{
@@ -296,8 +301,12 @@ New promo codes in the news channel: @NewsRetro — subscribe to receive promo c
 
 async def get_user_language (user_id :int )->str :
     try :
+        if user_id in language_cache :
+            return language_cache [user_id ]
         lang_doc =await user_languages .find_one ({"user_id":user_id })
-        return lang_doc .get ("language","ru")if lang_doc else "ru"
+        lang =lang_doc .get ("language","ru")if lang_doc else "ru"
+        language_cache [user_id ]=lang
+        return lang
     except :
         return "ru"
 
@@ -308,6 +317,7 @@ async def set_user_language (user_id :int ,language :str ):
         {"$set":{"language":language }},
         upsert =True
         )
+        language_cache [user_id ]=language
     except :
         pass
 
@@ -331,6 +341,33 @@ async def get_text (key :str ,user_id :int =None ,language :str =None ,**kwargs 
             logging .warning (f"Ошибка форматирования текста {key}: {e}")
             return text
     return text
+
+async def get_user_doc(user_id: int):
+    if user_id in user_doc_cache:
+        return user_doc_cache[user_id]
+    user_doc = await users.find_one({"user_id": user_id})
+    if user_doc:
+        user_doc_cache[user_id] = user_doc
+        username = user_doc.get("username")
+        if username:
+            username_to_userid_cache[username.lower()] = user_id
+    return user_doc
+
+async def get_user_id_by_username(username: str):
+    username_key = username.lower().strip()
+    if not username_key:
+        return None
+    if username_key in username_to_userid_cache:
+        return username_to_userid_cache[username_key]
+    user_doc = await users.find_one({"username": {"$regex": f"^{re.escape(username_key)}$", "$options": "i"}})
+    if user_doc:
+        user_id = user_doc["user_id"]
+        user_doc_cache[user_id] = user_doc
+        username_to_userid_cache[username_key] = user_id
+        if user_doc.get("username"):
+            username_to_userid_cache[user_doc["username"].lower()] = user_id
+        return user_id
+    return None
 
 async def api_rate_limiter ():
     while True :
@@ -366,6 +403,7 @@ async def safe_api_call (func ,*args ,**kwargs ):
 
 async def init_db ():
     await users .create_index ("user_id",unique =True )
+    await users .create_index ("username",unique =False )
     await history .create_index ([("user_id",ASCENDING ),("date",ASCENDING )])
     await chats .create_index ("chat_id",unique =True )
     await whitelist .create_index ("user_id",unique =True )
@@ -403,8 +441,13 @@ async def init_db ():
 
 async def is_whitelisted (uid :int )->bool :
     try :
-        result =await whitelist .find_one ({"user_id":uid })is not None
-        return result
+        if uid in whitelist_cache :
+            return True
+        result =await whitelist .find_one ({"user_id":uid })
+        if result :
+            whitelist_cache .add (uid )
+            return True
+        return False
     except :
         return False
 
@@ -416,21 +459,33 @@ async def is_owner_or_pro (uid :int )->bool :
 
 async def has_active_premium (uid :int )->bool :
     try :
+        expires_at =premium_cache .get (uid )
+        if expires_at and expires_at >datetime .now ():
+            return True
         premium_doc =await premium_subscriptions .find_one ({"user_id":uid })
         if not premium_doc :
+            premium_cache .pop (uid ,None)
             return False
         expires_at =premium_doc .get ("expires_at")
         if expires_at and expires_at >datetime .now ():
+            premium_cache [uid ]=expires_at
             return True
+        premium_cache .pop (uid ,None)
         return False
     except :
         return False
 
 async def get_premium_expires_at (uid :int )->datetime :
     try :
+        expires_at =premium_cache .get (uid )
+        if expires_at :
+            return expires_at
         premium_doc =await premium_subscriptions .find_one ({"user_id":uid })
         if premium_doc :
-            return premium_doc .get ("expires_at")
+            expires_at =premium_doc .get ("expires_at")
+            if expires_at :
+                premium_cache [uid ]=expires_at
+            return expires_at
         return None
     except :
         return None
@@ -483,12 +538,14 @@ async def save_user (user :types .User ,skip_history_check =False ):
     un =user .username or ""
     is_pro =await is_whitelisted (user .id )or await has_active_premium (user .id )or user .id ==OWNER_ID
 
-    existing =await users .find_one ({"user_id":user .id })
+    existing =await get_user_doc (user .id )
     changes =[]
 
     if existing :
         old_name =f"{existing.get('first_name','')} {existing.get('last_name','')}".strip ()
         old_un =existing .get ("username")or ""
+        if old_un and old_un.lower ()!=un.lower ():
+            username_to_userid_cache .pop (old_un.lower (),None)
 
         await users .update_one (
         {"user_id":user .id },
@@ -524,6 +581,18 @@ async def save_user (user :types .User ,skip_history_check =False ):
         if not is_pro :
             if name :await history .insert_one ({"user_id":user .id ,"type":"name","value":name ,"date":now })
             if un :await history .insert_one ({"user_id":user .id ,"type":"username","value":un ,"date":now })
+
+    cached_doc = {
+        "user_id": user .id,
+        "first_name": first_name,
+        "last_name": last_name,
+        "username": un,
+        "last_seen": now,
+        "is_pro": is_pro,
+    }
+    user_doc_cache [user .id ] = cached_doc
+    if un :
+        username_to_userid_cache [un.lower ()] = user .id
 
     return changes
 
@@ -597,7 +666,7 @@ async def update_all_users ():
             print (f"[{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}] ✅ Обновление завершено: пользователей обновлено {updated_count}, чатов обработано {chat_count}")
         except Exception as e :
             print (f"[{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}] ❌ Ошибка при обновлении: {str(e)}")
-        await asyncio .sleep (60 )
+        await asyncio .sleep (3600 )
 
 def generate_permanent_link (user_id :int )->str :
     return f"https://t.me/+{user_id}"
@@ -616,7 +685,7 @@ async def get_history (uid :int ,requester_id :int =None ,user_in_db :bool =True
         if requester_id !=OWNER_ID and not await is_owner_or_pro (requester_id )and requester_id !=uid :
             return await get_text ("user_not_found",requester_id ,language =lang ,uid =uid )
 
-    user_doc =await users .find_one ({"user_id":uid })
+    user_doc =await get_user_doc (uid )
     if not user_doc :
         if await is_owner_or_pro (requester_id )or requester_id ==uid :
             status_text =await get_text ("normal_status",requester_id ,language =lang )
@@ -658,11 +727,7 @@ async def get_history (uid :int ,requester_id :int =None ,user_in_db :bool =True
     if requester_id !=OWNER_ID and is_pro and not await is_owner_or_pro (requester_id )and requester_id !=uid :
         return await get_text ("user_not_found",requester_id ,language =lang ,uid =uid )
 
-    pipeline =[
-    {"$match":{"user_id":uid }},
-    {"$sort":{"date":1 }}
-    ]
-    cursor =history .aggregate (pipeline )
+    cursor =history .find ({"user_id":uid }).sort("date",1)
     rows =await cursor .to_list (length =500 )
 
     if not rows :
@@ -706,7 +771,7 @@ async def resolve_user (identifier :str ,from_user_id :int =None )->tuple :
     try :
         if identifier .isdigit ():
             uid =int (identifier )
-            user_doc =await users .find_one ({"user_id":uid })
+            user_doc =await get_user_doc (uid )
             if user_doc :
                 asyncio .create_task (save_user_from_id (uid ))
                 return None ,True
@@ -723,12 +788,8 @@ async def resolve_user (identifier :str ,from_user_id :int =None )->tuple :
             if not username_query :
                 return None ,False
 
-            user_doc =await users .find_one ({
-            "username":{"$regex":f"^{username_query}$","$options":"i"}
-            })
-
-            if user_doc :
-                user_id =user_doc ["user_id"]
+            user_id =await get_user_id_by_username (username_query )
+            if user_id :
                 asyncio .create_task (save_user_from_id (user_id ))
                 return None ,True
 
@@ -755,20 +816,20 @@ async def start (m :types .Message ):
     if m .chat .type !='private':
         return
 
-    lang =await get_user_language (m .from_user .id )
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
+    lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup ()
+        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
         keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
         keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
         await m .answer (await get_text ("choose_lang", user_id=m.from_user.id, language=lang ), reply_markup =keyboard ,protect_content =True )
         return
 
     if not await is_whitelisted (m .from_user .id ):
-        await save_user (m .from_user )
-    await save_chat (m .chat )
+        asyncio .create_task (save_user (m .from_user ))
+    asyncio .create_task (save_chat (m .chat ))
 
-    bot_username = (await bot.get_me()).username
+    bot_username = BOT_USERNAME or (await bot.get_me()).username
     add_button = InlineKeyboardButton(
         text="➕ " + await get_text("add_to_chats", user_id=m.from_user.id, language=lang),
         url=f"https://t.me/{bot_username}?startgroup=true"
@@ -800,10 +861,10 @@ async def set_language (callback_query :types .CallbackQuery ):
         pass
 
     if not await is_whitelisted (callback_query .from_user .id ):
-        await save_user (callback_query .from_user )
-    await save_chat (callback_query .message .chat )
+        asyncio .create_task (save_user (callback_query .from_user ))
+    asyncio .create_task (save_chat (callback_query .message .chat ))
 
-    bot_username = (await bot.get_me()).username
+    bot_username = BOT_USERNAME or (await bot.get_me()).username
     add_button = InlineKeyboardButton(
         text="➕ " + (await get_text("add_to_chats", callback_query.from_user.id) if lang == "en" else "Добавить в свой чат"),
         url=f"https://t.me/{bot_username}?startgroup=true"
@@ -838,7 +899,7 @@ async def chatid (m :types .Message ):
     if m .chat .type =='private':
         lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
         if not lang_doc :
-            keyboard =InlineKeyboardMarkup ()
+            keyboard =InlineKeyboardMarkup(inline_keyboard=[])
             keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
             keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
             await m .answer (await get_text ("choose_lang",m .from_user .id ,language ="ru"),reply_markup =keyboard ,protect_content =True )
@@ -855,14 +916,15 @@ async def me (m :types .Message ):
         return
 
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
+    lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup ()
+        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
         keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
         keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
-        await m .answer (await get_text ("choose_lang",m .from_user .id ,language ="ru"),reply_markup =keyboard ,protect_content =True )
+        await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
         return
 
-    was_in_db =await users .find_one ({"user_id":m .from_user .id })is not None
+    was_in_db =await get_user_doc (m .from_user .id )is not None
     await save_user (m .from_user )
 
     lang =await get_user_language (m .from_user .id )
@@ -904,11 +966,12 @@ async def id_cmd (m :types .Message ):
 
     if m .chat .type =='private':
         lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
+        lang =lang_doc .get ("language","ru")if lang_doc else "ru"
         if not lang_doc :
-            keyboard =InlineKeyboardMarkup ()
+            keyboard =InlineKeyboardMarkup(inline_keyboard=[])
             keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
             keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
-            await m .answer (await get_text ("choose_lang",m .from_user .id ,language ="ru"),reply_markup =keyboard ,protect_content =True )
+            await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
             return
 
     lang =await get_user_language (m .from_user .id )
@@ -918,11 +981,8 @@ async def id_cmd (m :types .Message ):
         arg =parts [1 ].strip ()
         if arg .startswith ("@"):
             username_query =arg [1 :].lower ()
-            user_doc =await users .find_one ({
-            "username":{"$regex":f"^{username_query}$","$options":"i"}
-            })
-            if user_doc :
-                uid =user_doc ["user_id"]
+            uid =await get_user_id_by_username (username_query )
+            if uid :
                 txt =f"<b>🆔 {await get_text('id_cmd', m.from_user.id, language=lang)}</b> <code>{uid}</code>"
                 await m .answer (txt ,protect_content =True )
                 return
@@ -951,11 +1011,12 @@ async def stop_premium (m :types .Message ):
         return
 
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
+    lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup ()
+        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
         keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
         keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
-        await m .answer (await get_text ("choose_lang",m .from_user .id ,language ="ru"),reply_markup =keyboard ,protect_content =True )
+        await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
         return
     lang =await get_user_language (m .from_user .id )
 
@@ -1046,10 +1107,10 @@ async def add_promo (m :types .Message ):
             ru_text = await get_text('promo_announce_channel', m.from_user.id, language='ru', code=code, used=0, max_uses=promo_doc['max_uses'], premium_days=promo_doc['premium_days'], creator_id=m.from_user.id, created_at=created_at_str)
             en_text = await get_text('promo_announce_channel', m.from_user.id, language='en', code=code, used=0, max_uses=promo_doc['max_uses'], premium_days=promo_doc['premium_days'], creator_id=m.from_user.id, created_at=created_at_str)
             full_text = ru_text + "\n\n" + en_text
-            btn_bot = await get_text('🤖RetroTag', m.from_user.id)
+            btn_bot = "🤖 RetroTag"
             bot_link = f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else "https://t.me/NewsRetro"
-            kb = InlineKeyboardMarkup(row_width=1)
-            kb.add(InlineKeyboardButton(text=f"{btn_bot}", url=bot_link))
+            kb = InlineKeyboardMarkup(inline_keyboard=[])
+            kb.add(InlineKeyboardButton(text=btn_bot, url=bot_link))
             try:
                 msg = await bot.send_message("@NewsRetro", full_text, reply_markup=kb, disable_web_page_preview=True, protect_content=True)
                 await db['promo_codes'].update_one({'code': code}, {'$set': {'announce_channel': '@NewsRetro', 'announce_message_id': msg.message_id}})
@@ -1568,14 +1629,13 @@ async def premium_cmd (m :types .Message ):
         return
 
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
+    lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup ()
+        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
         keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
         keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
-        await m .answer (await get_text ("choose_lang",m .from_user .id ,language ="ru"),reply_markup =keyboard ,protect_content =True )
+        await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
         return
-
-    lang =await get_user_language (m .from_user .id )
 
     parts =m .text .split (maxsplit =1 )
     if len (parts )>1 and await is_owner_or_pro (m .from_user .id ):
@@ -1754,7 +1814,7 @@ async def tools (m :types .Message ):
     if await is_whitelisted (m .from_user .id )and m .from_user .id !=OWNER_ID :
         return
 
-    await save_chat (m .chat )
+    asyncio .create_task (save_chat (m .chat ))
     changes =await save_user (m .from_user )
 
     if changes and m .chat .type in ['group','supergroup']:
@@ -1772,10 +1832,10 @@ async def tools (m :types .Message ):
         return
 
     if m .reply_to_message and m .reply_to_message .from_user :
-        await save_user (m .reply_to_message .from_user )
+        asyncio .create_task (save_user (m .reply_to_message .from_user ))
 
     if m .forward_from :
-        await save_user (m .forward_from )
+        asyncio .create_task (save_user (m .forward_from ))
 
     text =(m .text or m .caption or "").strip ()
 
@@ -1785,11 +1845,12 @@ async def tools (m :types .Message ):
     if m .chat .type =='private':
 
         lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
+        lang =lang_doc .get ("language","ru")if lang_doc else "ru"
         if not lang_doc :
-            keyboard =InlineKeyboardMarkup ()
+            keyboard =InlineKeyboardMarkup(inline_keyboard=[])
             keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
             keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
-            await m .answer (await get_text ("choose_lang",m .from_user .id ,language ="ru"),reply_markup =keyboard ,protect_content =True )
+            await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
             return
 
         if text .startswith ("/broadcast"):
@@ -1876,7 +1937,7 @@ async def tools (m :types .Message ):
 
                 if not subscribed and m.from_user.id != OWNER_ID:
                     lang = await get_user_language(m.from_user.id)
-                    kb = InlineKeyboardMarkup(row_width=1)
+                    kb = InlineKeyboardMarkup(inline_keyboard=[])
                     news_btn = await get_text('news_channel_button', m.from_user.id, language=lang)
                     check_btn = await get_text('check_sub_button', m.from_user.id, language=lang)
                     kb.add(InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro"))
@@ -1902,13 +1963,9 @@ async def tools (m :types .Message ):
                         user_id_to_check =int (text )
                     else :
                         username_query =text [1 :].lower ()if text .startswith ("@")else text .lower ()
-                        user_doc =await users .find_one ({
-                        "username":{"$regex":f"^{username_query}$","$options":"i"}
-                        })
-                        if user_doc :
-                            user_id_to_check =user_doc ["user_id"]
+                        user_id_to_check =await get_user_id_by_username (username_query )
 
-                    was_in_db =await users .find_one ({"user_id":user_id_to_check })is not None if user_id_to_check else False
+                    was_in_db =await get_user_doc (user_id_to_check )is not None if user_id_to_check else False
 
                     if user_obj :
                         await save_user (user_obj )
@@ -1935,7 +1992,7 @@ async def tools (m :types .Message ):
             u =m .forward_from
             if not subscribed and m.from_user.id != OWNER_ID:
                 lang = await get_user_language(m.from_user.id)
-                kb = InlineKeyboardMarkup(row_width=1)
+                kb = InlineKeyboardMarkup(inline_keyboard=[])
                 news_btn = await get_text('news_channel_button', m.from_user.id, language=lang)
                 check_btn = await get_text('check_sub_button', m.from_user.id, language=lang)
                 kb.add(InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro"))
@@ -1953,7 +2010,7 @@ async def tools (m :types .Message ):
                 return
 
             lang =await get_user_language (m .from_user .id )
-            was_in_db =await users .find_one ({"user_id":u .id })is not None
+            was_in_db =await get_user_doc (u .id )is not None
             header =f"<b>{await get_text('forwarded_from', m.from_user.id, language=lang)}</b>"
             sender_name =html .escape (u .full_name or await get_text ("unavailable",m .from_user .id ,language =lang ))
             header +=f"<b>{sender_name}</b>\n\n"
@@ -1982,13 +2039,11 @@ async def on_bot_join (upd :ChatMemberUpdated ):
             admins =await bot .get_chat_administrators (upd .chat .id )
             if admins :
                 first_admin_id =admins [0 ].user .id
-                lang_doc =await user_languages .find_one ({"user_id":first_admin_id })
-                if lang_doc :
-                    chat_lang =lang_doc .get ("language","ru")
+                chat_lang =await get_user_language (first_admin_id )
         except :
             pass
 
-        keyboard =InlineKeyboardMarkup ()
+        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
         keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data =f"chat_lang_ru_{upd.chat.id}"))
         keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data =f"chat_lang_en_{upd.chat.id}"))
 
@@ -2058,7 +2113,7 @@ async def set_chat_language (callback_query :types .CallbackQuery ):
     if not has_admin_rights :
         welcome_message +=f"\n\n{await get_text('welcome_admin_warning', language=lang)}"
 
-    bot_username = (await bot.get_me()).username
+    bot_username = BOT_USERNAME or (await bot.get_me()).username
     add_button = InlineKeyboardButton(
         text=await get_text("add_to_chats", language=lang),
         url=f"https://t.me/{bot_username}?startgroup=true"
@@ -2167,11 +2222,9 @@ async def check_subscription (callback_query :types .CallbackQuery ):
                             user_id_to_check = int(text)
                         else:
                             username_query = text[1:].lower() if text.startswith("@") else text.lower()
-                            user_doc = await users.find_one({"username": {"$regex": f"^{username_query}$", "$options": "i"}})
-                            if user_doc:
-                                user_id_to_check = user_doc["user_id"]
+                            user_id_to_check = await get_user_id_by_username(username_query)
 
-                        was_in_db = await users.find_one({"user_id": user_id_to_check}) is not None if user_id_to_check else False
+                        was_in_db = await get_user_doc(user_id_to_check) is not None if user_id_to_check else False
                         if user_obj:
                             await save_user(user_obj)
                             await bot.send_message(callback_query.from_user.id, await get_history(user_obj.id, callback_query.from_user.id, user_in_db=was_in_db), protect_content=True)
@@ -2183,7 +2236,7 @@ async def check_subscription (callback_query :types .CallbackQuery ):
 
                 elif pending.get('type') == 'forward':
                     uid = pending.get('value')
-                    was_in_db = await users.find_one({"user_id": uid}) is not None
+                    was_in_db = await get_user_doc(uid) is not None
                     header = f"<b>{await get_text('forwarded_from', callback_query.from_user.id, language=lang)}</b>"
                     sender_name = html.escape((await bot.get_chat(uid)).full_name or await get_text("unavailable", callback_query.from_user.id, language=lang))
                     header += f"<b>{sender_name}</b>\n\n"
@@ -2191,7 +2244,7 @@ async def check_subscription (callback_query :types .CallbackQuery ):
             except Exception:
                 pass
     else:
-        kb = InlineKeyboardMarkup(row_width=1)
+        kb = InlineKeyboardMarkup(inline_keyboard=[])
         news_btn = await get_text('news_channel_button', callback_query.from_user.id, language=lang)
         check_btn = await get_text('check_sub_button', callback_query.from_user.id, language=lang)
         kb.add(InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro"))
@@ -2350,9 +2403,7 @@ async def member_upd (upd :ChatMemberUpdated ):
                 admins =await bot .get_chat_administrators (upd .chat .id )
                 if admins :
                     first_admin_id =admins [0 ].user .id
-                    lang_doc =await user_languages .find_one ({"user_id":first_admin_id })
-                    if lang_doc :
-                        chat_lang =lang_doc .get ("language","ru")
+                    chat_lang =await get_user_language (first_admin_id )
         except :
             pass
 
@@ -3585,6 +3636,11 @@ async def main ():
     api_queue =asyncio .Queue (maxsize =25 )
 
     await init_db ()
+    async for wl in whitelist .find ({}):
+        whitelist_cache .add (wl ["user_id"])
+    now =datetime .now ()
+    async for premium_doc in premium_subscriptions .find ({"expires_at":{"$gt":now }}):
+        premium_cache [premium_doc ["user_id"]]=premium_doc .get ("expires_at")
     global BOT_USERNAME
     try:
         me = await bot.get_me()
