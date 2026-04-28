@@ -819,9 +819,10 @@ async def start (m :types .Message ):
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
     lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-        keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
-        keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+        ])
         await m .answer (await get_text ("choose_lang", user_id=m.from_user.id, language=lang ), reply_markup =keyboard ,protect_content =True )
         return
 
@@ -899,9 +900,10 @@ async def chatid (m :types .Message ):
     if m .chat .type =='private':
         lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
         if not lang_doc :
-            keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-            keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
-            keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+                [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+            ])
             await m .answer (await get_text ("choose_lang",m .from_user .id ,language ="ru"),reply_markup =keyboard ,protect_content =True )
             return
 
@@ -918,9 +920,10 @@ async def me (m :types .Message ):
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
     lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-        keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
-        keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+        ])
         await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
         return
 
@@ -968,9 +971,10 @@ async def id_cmd (m :types .Message ):
         lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
         lang =lang_doc .get ("language","ru")if lang_doc else "ru"
         if not lang_doc :
-            keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-            keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
-            keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+                [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+            ])
             await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
             return
 
@@ -1013,9 +1017,10 @@ async def stop_premium (m :types .Message ):
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
     lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-        keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
-        keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+        ])
         await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
         return
     lang =await get_user_language (m .from_user .id )
@@ -1109,8 +1114,9 @@ async def add_promo (m :types .Message ):
             full_text = ru_text + "\n\n" + en_text
             btn_bot = "🤖 RetroTag"
             bot_link = f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else "https://t.me/NewsRetro"
-            kb = InlineKeyboardMarkup(inline_keyboard=[])
-            kb.add(InlineKeyboardButton(text=btn_bot, url=bot_link))
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=btn_bot, url=bot_link)]
+            ])
             try:
                 msg = await bot.send_message("@NewsRetro", full_text, reply_markup=kb, disable_web_page_preview=True, protect_content=True)
                 await db['promo_codes'].update_one({'code': code}, {'$set': {'announce_channel': '@NewsRetro', 'announce_message_id': msg.message_id}})
@@ -1631,9 +1637,10 @@ async def premium_cmd (m :types .Message ):
     lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
     lang =lang_doc .get ("language","ru")if lang_doc else "ru"
     if not lang_doc :
-        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-        keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
-        keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+            [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+        ])
         await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
         return
 
@@ -1847,9 +1854,10 @@ async def tools (m :types .Message ):
         lang_doc =await user_languages .find_one ({"user_id":m .from_user .id })
         lang =lang_doc .get ("language","ru")if lang_doc else "ru"
         if not lang_doc :
-            keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-            keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data ="lang_ru"))
-            keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data ="lang_en"))
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+                [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]
+            ])
             await m .answer (await get_text ("choose_lang",m .from_user .id ,language =lang),reply_markup =keyboard ,protect_content =True )
             return
 
@@ -1937,11 +1945,10 @@ async def tools (m :types .Message ):
 
                 if not subscribed and m.from_user.id != OWNER_ID:
                     lang = await get_user_language(m.from_user.id)
-                    kb = InlineKeyboardMarkup(inline_keyboard=[])
-                    news_btn = await get_text('news_channel_button', m.from_user.id, language=lang)
-                    check_btn = await get_text('check_sub_button', m.from_user.id, language=lang)
-                    kb.add(InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro"))
-                    kb.add(InlineKeyboardButton(text=check_btn, callback_data="check_sub"))
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro")],
+                        [InlineKeyboardButton(text=check_btn, callback_data="check_sub")]
+                    ])
                     # store pending text search to run after subscription check (persist in DB)
                     try:
                         await db["pending_searches"].update_one(
@@ -1992,11 +1999,10 @@ async def tools (m :types .Message ):
             u =m .forward_from
             if not subscribed and m.from_user.id != OWNER_ID:
                 lang = await get_user_language(m.from_user.id)
-                kb = InlineKeyboardMarkup(inline_keyboard=[])
-                news_btn = await get_text('news_channel_button', m.from_user.id, language=lang)
-                check_btn = await get_text('check_sub_button', m.from_user.id, language=lang)
-                kb.add(InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro"))
-                kb.add(InlineKeyboardButton(text=check_btn, callback_data="check_sub"))
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro")],
+                    [InlineKeyboardButton(text=check_btn, callback_data="check_sub")]
+                ])
                 # store pending forward to run after subscription check (persist in DB)
                 try:
                     await db["pending_searches"].update_one(
@@ -2043,9 +2049,10 @@ async def on_bot_join (upd :ChatMemberUpdated ):
         except :
             pass
 
-        keyboard =InlineKeyboardMarkup(inline_keyboard=[])
-        keyboard .add (InlineKeyboardButton ("🇷🇺 Русский",callback_data =f"chat_lang_ru_{upd.chat.id}"))
-        keyboard .add (InlineKeyboardButton ("🇬🇧 English",callback_data =f"chat_lang_en_{upd.chat.id}"))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton("🇷🇺 Русский", callback_data=f"chat_lang_ru_{upd.chat.id}")],
+            [InlineKeyboardButton("🇬🇧 English", callback_data=f"chat_lang_en_{upd.chat.id}")]
+        ])
 
         try :
             lang_msg =await bot .send_message (
@@ -2244,11 +2251,10 @@ async def check_subscription (callback_query :types .CallbackQuery ):
             except Exception:
                 pass
     else:
-        kb = InlineKeyboardMarkup(inline_keyboard=[])
-        news_btn = await get_text('news_channel_button', callback_query.from_user.id, language=lang)
-        check_btn = await get_text('check_sub_button', callback_query.from_user.id, language=lang)
-        kb.add(InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro"))
-        kb.add(InlineKeyboardButton(text=check_btn, callback_data="check_sub"))
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=news_btn, url="https://t.me/NewsRetro")],
+            [InlineKeyboardButton(text=check_btn, callback_data="check_sub")]
+        ])
         await callback_query.answer(await get_text('check_sub_not', callback_query.from_user.id, language=lang), show_alert=True)
         try:
             await bot.send_message(callback_query.from_user.id, await get_text('need_subscribe', callback_query.from_user.id, language=lang), reply_markup=kb, protect_content=True)
